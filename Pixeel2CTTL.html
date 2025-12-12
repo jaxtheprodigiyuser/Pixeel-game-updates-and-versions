@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixeel 2: Come to the Light</title>
+<style>
+body{margin:0;font-family:sans-serif;background:#f4f4f4;overflow:hidden}
+#startMenu,#shopMenu,#lockerMenu{position:absolute;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#ededed;z-index:10}
+#startMenu button,#shopMenu button,#lockerMenu button{padding:15px 30px;margin:5px;font-size:1.5em;background:#d0d0d0;border:2px solid #888;border-radius:10px;cursor:pointer;transition:.15s}
+#startMenu button:hover,#shopMenu button:hover,#lockerMenu button:hover{transform:scale(1.05);background:#c4c4c4}
+#game{width:800px;height:400px;margin:0 auto;background:linear-gradient(to top,#fff,#ddd);border:2px solid #aaa;position:relative;overflow:hidden}
+#world{position:absolute;width:10000px;height:400px;left:0;bottom:0}
+.player{position:absolute;width:40px;height:40px;border-radius:8px;transition:transform .15s;box-shadow:0 0 20px rgba(255,0,0,.5),0 4px 8px rgba(0,0,0,.25)}
+.trail{position:absolute;width:10px;height:10px;border-radius:50%;pointer-events:none}
+.trail.normal{background:rgba(255,200,0,.6)}
+.trail.dash{background:rgba(0,255,255,.7)}
+.spike{position:absolute;width:40px;height:20px;background:#555;clip-path:polygon(50% 0%,0% 100%,100% 100%);bottom:0}
+.spike.ceiling{transform:rotate(180deg);top:0;bottom:auto}
+.star{position:absolute;width:20px;height:20px;background:black;border-radius:50%;box-shadow:0 0 10px #000}
+#scoreboard{position:fixed;top:10px;left:10px;font-size:16px}
+#shopMenu,#lockerMenu{display:none;flex-direction:column;align-items:center;justify-content:start;padding-top:50px}
+#shopItems,#lockerItems{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.skin{width:50px;height:50px;border:2px solid #444;border-radius:8px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:12px;color:white}
+.owned{border-color:gold}
+</style>
+</head>
+<body>
+
+<div id="startMenu"><h1>Pixeel 2: Come to the Light</h1>
+<button id="startBtn">Start Game</button>
+<button id="shopBtn">Shop</button>
+<button id="lockerBtn">Locker</button>
+<button id="saveBtn">Save Game</button>
+</div>
+
+<div id="shopMenu"><h2>Shop</h2>
+<div id="shopItems"></div>
+<p>Career Score: <span id="shopCareerScore">0</span></p>
+<button id="backBtn">Back</button>
+</div>
+
+<div id="lockerMenu"><h2>Locker</h2>
+<div id="lockerItems"></div>
+<button id="lockerBackBtn">Back</button>
+</div>
+
+<div id="game">
+<div id="scoreboard">
+Score: <span id="score">0</span> |
+High Score: <span id="highScore">0</span> |
+Career Score: <span id="careerScore">0</span> |
+Chain Flips: <span id="chainFlips">0</span> |
+Hard Mode: <span id="hardModeIndicator">OFF</span>
+</div>
+<div id="world"><div id="player" class="player"></div></div>
+</div>
+
+<script>
+const startMenu=document.getElementById("startMenu"),
+shopMenu=document.getElementById("shopMenu"),
+lockerMenu=document.getElementById("lockerMenu"),
+startBtn=document.getElementById("startBtn"),
+shopBtn=document.getElementById("shopBtn"),
+lockerBtn=document.getElementById("lockerBtn"),
+saveBtn=document.getElementById("saveBtn"),
+backBtn=document.getElementById("backBtn"),
+lockerBackBtn=document.getElementById("lockerBackBtn"),
+world=document.getElementById("world"),
+player=document.getElementById("player"),
+scoreEl=document.getElementById("score"),
+highScoreEl=document.getElementById("highScore"),
+careerScoreEl=document.getElementById("careerScore"),
+shopCareerScoreEl=document.getElementById("shopCareerScore"),
+shopItemsDiv=document.getElementById("shopItems"),
+lockerItemsDiv=document.getElementById("lockerItems"),
+chainFlipsEl=document.getElementById("chainFlips"),
+hardModeEl=document.getElementById("hardModeIndicator");
+
+let playerPos={x:100,y:0},speed=4,gravityDirection=1,jumpVelocity=0,jumpCount=0,trails=[],gameOver=false,
+spikes=[],stars=[],flipsThisRun=0,chainFlipCount=0,dashCooldown=false,dashActive=false,dashTime=0,
+invincibleCooldown=false,hardMode=false;
+
+let score=0,highScore=0,careerScore=0;
+const gravity=0.37,jumpPower=7.5,maxJumps=2;
+let keys={up:false,flip:false,right:false,inv:false};
+
+const skins=[
+{name:"Red",color:"#ff4444",price:0,owned:true,rarity:"common"},
+{name:"Blue",color:"#4444ff",price:50,owned:false,rarity:"common"},
+{name:"Green",color:"#44ff44",price:50,owned:false,rarity:"common"},
+{name:"Crimson",color:"#cc0000",price:500,owned:false,rarity:"rare"},
+{name:"Ruby",color:"#ff0000",price:500,owned:false,rarity:"rare"},
+{name:"Obsidian",color:"#222222",price:1000,owned:false,rarity:"mythic"},
+{name:"Secret1",color:"#ff00ff",price:0,owned:false,rarity:"secret"},
+{name:"Secret2",color:"#00ffff",price:0,owned:false,rarity:"secret"},
+{name:"Secret3",color:"#ffff00",price:0,owned:false,rarity:"secret"}];
+let currentSkin="Red";
+
+const trailsList=[
+{name:"Golden",class:"normal",price:100,owned:false},
+{name:"Cyan",class:"dash",price:200,owned:false}
+];
+let currentTrail="Golden";
+
+// --- KEY EVENTS ---
+document.addEventListener("keydown",e=>{
+  if(e.key==="ArrowUp") keys.up=true;
+  if((e.key==="ArrowDown"||e.key==="s")&&!keys.flip){
+    if(jumpCount>0){flipsThisRun++;chainFlipCount++;chainFlipsEl.textContent=chainFlipCount;}
+    gravityDirection*=-1;
+    player.style.transform=`scaleY(${gravityDirection})`;
+    keys.flip=true;
+  }
+  if(e.key==="ArrowRight" && !dashActive && !dashCooldown){
+    dashActive=true; dashTime=0;
+    dashCooldown=true;
+    setTimeout(()=>dashCooldown=false,2000);
+  }
+  if(e.key==="i" && !invincibleCooldown){
+    keys.inv=true;
+    invincibleCooldown=true;
+    setTimeout(()=>{keys.inv=false;invincibleCooldown=false;},10000);
+  }
+});
+
+document.addEventListener("keyup",e=>{
+  if(e.key==="ArrowUp") keys.up=false;
+  if(e.key==="ArrowDown"||e.key==="s") keys.flip=false;
+  if(e.key==="ArrowRight") keys.right=false;
+});
+
+// --- SAVE/LOAD ---
+function saveGame(){
+  localStorage.setItem("careerScore",careerScore);
+  localStorage.setItem("highScore",highScore);
+  localStorage.setItem("ownedSkins",JSON.stringify(skins.filter(s=>s.owned).map(s=>s.name)));
+  localStorage.setItem("currentSkin",currentSkin);
+  localStorage.setItem("ownedTrails",JSON.stringify(trailsList.filter(t=>t.owned).map(t=>t.name)));
+  localStorage.setItem("currentTrail",currentTrail);
+  alert("Saved!");
+}
+
+function loadGame(){
+  if(localStorage.getItem("careerScore")) careerScore=parseInt(localStorage.getItem("careerScore"));
+  if(localStorage.getItem("highScore")) highScore=parseInt(localStorage.getItem("highScore"));
+  const ownedSkins=JSON.parse(localStorage.getItem("ownedSkins")||"[]");
+  skins.forEach(s=>{if(ownedSkins.includes(s.name)) s.owned=true});
+  const ownedTrails=JSON.parse(localStorage.getItem("ownedTrails")||"[]");
+  trailsList.forEach(t=>{if(ownedTrails.includes(t.name)) t.owned=true});
+  if(localStorage.getItem("currentSkin")) currentSkin=localStorage.getItem("currentSkin");
+  if(localStorage.getItem("currentTrail")) currentTrail=localStorage.getItem("currentTrail");
+  careerScoreEl.textContent=careerScore;
+  highScoreEl.textContent=highScore;
+}
+
+// --- MENUS ---
+startBtn.onclick=()=>{startMenu.style.display="none";resetGame();gameLoop();};
+shopBtn.onclick=()=>{startMenu.style.display="none";lockerMenu.style.display="none";shopMenu.style.display="flex";populateShop();};
+lockerBtn.onclick=()=>{startMenu.style.display="none";shopMenu.style.display="none";lockerMenu.style.display="flex";populateLocker();};
+saveBtn.onclick=saveGame;backBtn.onclick=()=>{shopMenu.style.display="none";startMenu.style.display="flex";};
+lockerBackBtn.onclick=()=>{lockerMenu.style.display="none";startMenu.style.display="flex";};
+
+// --- POPULATE SHOP/LOCKER ---
+function populateShop(){
+  shopCareerScoreEl.textContent=careerScore;
+  shopItemsDiv.innerHTML="";
+  skins.forEach(s=>{
+    if(s.rarity!=="secret"){
+      const d=document.createElement("div");
+      d.className="skin"+(s.owned?" owned":"");
+      d.style.background=s.color;
+      d.textContent=s.name+(s.owned?" ✓":" "+s.price);
+      d.onclick=()=>{
+        if(!s.owned && careerScore>=s.price){careerScore-=s.price; s.owned=true; currentSkin=s.name; populateShop();}
+        else if(s.owned){currentSkin=s.name;}
+        careerScoreEl.textContent=careerScore;
+      };
+      shopItemsDiv.appendChild(d);
+    }
+  });
+  trailsList.forEach(t=>{
+    const d=document.createElement("div");
+    d.className="skin"+(t.owned?" owned":"");
+    d.style.background=t.class==="normal"?"gold":"cyan";
+    d.textContent=t.name+(t.owned?" ✓":" "+t.price);
+    d.onclick=()=>{
+      if(!t.owned && careerScore>=t.price){careerScore-=t.price; t.owned=true; currentTrail=t.name; populateShop();}
+      else if(t.owned){currentTrail=t.name;}
+      careerScoreEl.textContent=careerScore;
+    };
+    shopItemsDiv.appendChild(d);
+  });
+}
+
+function populateLocker(){
+  lockerItemsDiv.innerHTML="";
+  skins.forEach(s=>{if(s.owned){const d=document.createElement("div");d.className="skin owned";d.style.background=s.color; d.textContent=s.name; d.onclick=()=>{currentSkin=s.name}; lockerItemsDiv.appendChild(d);}});
+  trailsList.forEach(t=>{if(t.owned){const d=document.createElement("div");d.className="skin owned";d.style.background=t.class==="normal"?"gold":"cyan"; d.textContent=t.name; d.onclick=()=>{currentTrail=t.name}; lockerItemsDiv.appendChild(d);}});
+}
+
+// --- GAME FUNCTIONS ---
+function resetGame(){
+  playerPos={x:100,y:0};
+  jumpVelocity=0; jumpCount=0; flipsThisRun=0; chainFlipCount=0; trails=[];
+  spikes.forEach(s=>s.s.remove());
+  stars.forEach(s=>s.s.remove());
+  spikes=[]; stars=[]; score=0; speed=4; gameOver=false; hardMode=false;
+  hardModeEl.textContent="OFF"; chainFlipsEl.textContent=chainFlipCount;
+}
+
+function createSpike(x,ceiling=false){
+  const s=document.createElement("div"); s.className="spike"+(ceiling?" ceiling":""); s.style.left=x+"px"; world.appendChild(s);
+  spikes.push({x,s,ceiling});
+}
+function createStar(x){
+  const s=document.createElement("div"); s.className="star"; s.style.left=x+"px"; s.style.bottom="50px"; world.appendChild(s);
+  stars.push({x,s});
+}
+function generateStuff(){
+  let l=spikes.length?spikes[spikes.length-1].x:300;
+  while(l<playerPos.x+900){
+    l+=140+Math.random()*140;
+    if(Math.random()<.45) createSpike(l, Math.random()<.5);
+    if(Math.random()<.55) createStar(l+Math.random()*60);
+  }
+}
+
+function addTrail(dash=false){
+  const t=document.createElement("div");
+  t.className="trail "+(dash?"dash":"normal");
+  t.style.left=playerPos.x+15+"px";
+  t.style.bottom=playerPos.y+15+"px";
+  world.appendChild(t);
+  trails.push(t);
+  if(trails.length>20){trails[0].remove();trails.shift();}
+}
+
+function gameLoop(){
+  if(gameOver) return;
+  speed=4+Math.floor(score/10)*0.5;
+  let moveSpeed=speed;
+
+  // Dash
+  if(dashActive){
+    moveSpeed*=2;
+    addTrail(true);
+    dashTime+=1/60;
+    if(dashTime>=3) dashActive=false;
+  } else addTrail(false);
+
+  playerPos.x+=moveSpeed;
+
+  if(keys.up && jumpCount<maxJumps){jumpVelocity=jumpPower*gravityDirection;jumpCount++;keys.up=false;}
+  jumpVelocity-=gravity*gravityDirection; playerPos.y+=jumpVelocity;
+
+  if(playerPos.y<=0 && gravityDirection===1){playerPos.y=0;jumpVelocity=0;jumpCount=0;chainFlipCount=0;chainFlipsEl.textContent=chainFlipCount;}
+  if(playerPos.y>=360 && gravityDirection===-1){playerPos.y=360;jumpVelocity=0;jumpCount=0;chainFlipCount=0;chainFlipsEl.textContent=chainFlipCount;}
+
+  spikes.forEach(s=>{if(playerPos.x+40>s.x && playerPos.x<s.x+40){if(!s.ceiling && playerPos.y<20 && !keys.inv) die(); if(s.ceiling && playerPos.y+40>380 && !keys.inv) die();}});
+  stars.forEach((s,i)=>{if(playerPos.x+40>s.x && playerPos.x<s.x+20){score++; careerScore++; if(chainFlipCount>1) score+=2; s.s.remove(); stars.splice(i,1); scoreEl.textContent=score; careerScoreEl.textContent=careerScore;}});
+
+  if(flipsThisRun>=100) skins.find(s=>s.name==="Secret1").owned=true;
+  if(score>=100) skins.find(s=>s.name==="Secret2").owned=true;
+  if(skins.filter(s=>s.owned).length===skins.length) skins.find(s=>s.name==="Secret3").owned=true;
+  if(score>=10000){alert("🎉 SECRET WIN! You reached 10000! 🎉"); gameOver=true;}
+
+  generateStuff();
+
+  player.style.background=skins.find(s=>s.name===currentSkin).color;
+  world.style.transform=`translateX(${-playerPos.x+100}px)`;
+  player.style.left=playerPos.x+"px";
+  player.style.bottom=playerPos.y+"px";
+
+  requestAnimationFrame(gameLoop);
+}
+
+function die(){
+  gameOver=true;
+  if(score>highScore) highScore=score;
+  highScoreEl.textContent=highScore;
+  alert("Game Over! Score: "+score);
+  startMenu.style.display="flex";
+}
+
+loadGame();
+</script>
+</body>
+</html>
