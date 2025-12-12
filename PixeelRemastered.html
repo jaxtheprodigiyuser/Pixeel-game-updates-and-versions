@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixeel Remastered</title>
+<style>
+body { margin:0; font-family:sans-serif; background:#111; color:#fff; overflow:hidden; }
+#startMenu { position:absolute; width:100%; height:100%; background:linear-gradient(to bottom,#111,#333); display:flex; justify-content:center; align-items:center; flex-direction:column; z-index:10; }
+#startMenu button { padding:15px 30px; font-size:1.5em; background:#444; color:#fff; border:2px solid #888; cursor:pointer; margin-top:20px; border-radius:8px; }
+#startMenu button:hover { background:#666; }
+#game { position:relative; width:800px; height:400px; margin:0 auto; background:linear-gradient(to top,#0d0d0d,#222); border:2px solid #555; overflow:hidden; }
+#world { position:absolute; width:10000px; height:400px; bottom:0; left:0; }
+.player { position:absolute; width:40px; height:40px; background:linear-gradient(145deg,#ff5555,#aa0000); border-radius:10px; box-shadow:0 0 10px #ff0000; bottom:0; }
+.spike { position:absolute; width:40px; height:20px; background:white; clip-path: polygon(50% 0%,0% 100%,100% 100%); bottom:0; }
+.star { position:absolute; width:20px; height:20px; background:yellow; border-radius:50%; box-shadow:0 0 10px #ff0; bottom:0; }
+#scoreboard { position:fixed; top:10px; left:10px; font-size:18px; z-index:20; }
+</style>
+</head>
+<body>
+
+<div id="startMenu">
+  <h1>Pixeel Remastered</h1>
+  <button id="startBtn">Start Game</button>
+  <button id="shopBtn">Shop</button>
+  <button id="saveBtn">Save Game</button> <!-- Save button -->
+</div>
+
+<div id="shopMenu" style="display:none;">
+  <h2>Shop - Select Your Color</h2>
+  <div id="shopItems"></div>
+  <button id="backBtn">Back</button>
+  <p>Career Score: <span id="shopCareerScore">0</span></p>
+</div>
+
+<div id="game">
+  <div id="scoreboard">
+    Score: <span id="score">0</span> |
+    High Score: <span id="highScore">0</span> |
+    Career Score: <span id="careerScore">0</span>
+  </div>
+  <div id="world">
+    <div id="player" class="player"></div>
+  </div>
+</div>
+
+<script>
+// Elements
+const startMenu = document.getElementById('startMenu');
+const shopMenu = document.getElementById('shopMenu');
+const startBtn = document.getElementById('startBtn');
+const shopBtn = document.getElementById('shopBtn');
+const saveBtn = document.getElementById('saveBtn'); // Save button
+const backBtn = document.getElementById('backBtn');
+const shopItemsDiv = document.getElementById('shopItems');
+const shopCareerScoreEl = document.getElementById('shopCareerScore');
+
+const world = document.getElementById('world');
+const player = document.getElementById('player');
+const scoreEl = document.getElementById('score');
+const highScoreEl = document.getElementById('highScore');
+const careerScoreEl = document.getElementById('careerScore');
+
+// Game variables
+let playerPos = { x: 100, y: 0 };
+let speed = 4; // initial speed
+let keys = { up:false };
+let spikes = [];
+let stars = [];
+let score = 0;
+let highScore = 0;
+let careerScore = 0;
+let gameOver = false;
+
+// Jump variables
+let jumpVelocity = 0;
+const gravity = 0.5;
+let jumpCount = 0;
+const maxJumps = 2;
+
+// Player customization
+const colors = [
+    {name:'Red', gradient:'linear-gradient(145deg,#ff5555,#aa0000)', cost:0},
+    {name:'Green', gradient:'linear-gradient(145deg,#55ff55,#00aa00)', cost:50},
+    {name:'Blue', gradient:'linear-gradient(145deg,#5555ff,#0000aa)', cost:50},
+    {name:'Purple', gradient:'linear-gradient(145deg,#aa55ff,#5500aa)', cost:100}
+];
+let unlockedColors = [0]; 
+let selectedColor = colors[0];
+
+// --- Save/Load JS-only feature (only saves when clicking the save button) ---
+function saveGame() {
+    localStorage.setItem('careerScore', careerScore);
+    localStorage.setItem('highScore', highScore);
+    localStorage.setItem('selectedColor', colors.indexOf(selectedColor));
+    alert("Game Saved!");
+}
+function loadGame() {
+    const savedCareer = localStorage.getItem('careerScore');
+    const savedHigh = localStorage.getItem('highScore');
+    const savedColor = localStorage.getItem('selectedColor');
+
+    if(savedCareer) careerScore = parseInt(savedCareer);
+    if(savedHigh) highScore = parseInt(savedHigh);
+    if(savedColor !== null) selectedColor = colors[parseInt(savedColor)];
+
+    careerScoreEl.textContent = careerScore;
+    highScoreEl.textContent = highScore;
+    updatePlayerColor();
+}
+
+// Controls
+document.addEventListener('keydown', e => { if(e.key==='ArrowUp') keys.up=true; });
+document.addEventListener('keyup', e => { if(e.key==='ArrowUp') keys.up=false; });
+
+// Start game
+startBtn.addEventListener('click', () => {
+    startMenu.style.display='none';
+    shopMenu.style.display='none';
+    resetGame();
+    gameLoop();
+});
+
+// Shop
+shopBtn.addEventListener('click', ()=>{
+    startMenu.style.display='none';
+    shopMenu.style.display='flex';
+    updateShop();
+});
+backBtn.addEventListener('click', ()=>{
+    shopMenu.style.display='none';
+    startMenu.style.display='flex';
+});
+
+// Save button
+saveBtn.addEventListener('click', saveGame);
+
+// Create spike
+function createSpike(x){
+    const s = document.createElement('div');
+    s.className='spike';
+    s.style.left = x+'px';
+    world.appendChild(s);
+    spikes.push({x,s});
+}
+
+// Create star
+function createStar(x){
+    const s = document.createElement('div');
+    s.className='star';
+    s.style.left = x+'px';
+    s.style.bottom = 40; // floating above ground
+    world.appendChild(s);
+    stars.push({x,s});
+}
+
+// Reset game
+function resetGame(){
+    playerPos={x:100,y:0};
+    jumpVelocity = 0;
+    jumpCount = 0;
+    spikes.forEach(s=>s.s.remove());
+    stars.forEach(s=>s.s.remove());
+    spikes=[]; stars=[];
+    score=0;
+    speed=4; // reset speed
+    gameOver=false;
+    updatePlayerColor();
+}
+
+// Generate obstacles & stars ahead
+function generateElements(){
+    let lastX = spikes.length ? spikes[spikes.length-1].x : 200;
+    while(lastX < playerPos.x + 1000){
+        let gap = 150 + Math.random()*150; // wider spacing
+        lastX += gap;
+        if(Math.random()<0.4) createSpike(lastX);
+        if(Math.random()<0.5) createStar(lastX+Math.random()*50);
+    }
+}
+
+// Update player gradient
+function updatePlayerColor(){
+    player.style.background = selectedColor.gradient;
+}
+
+// Update speed based on score
+function updateSpeed(){
+    speed = 4 + Math.floor(score/10) * 0.5; // increase every 10 points
+}
+
+// Game loop
+function gameLoop(){
+    if(gameOver) return;
+
+    updateSpeed(); // dynamic speed
+
+    playerPos.x += speed;
+
+    if(keys.up && jumpCount < maxJumps){
+        jumpVelocity = 10;
+        jumpCount++;
+        keys.up=false;
+    }
+    jumpVelocity -= gravity;
+    playerPos.y += jumpVelocity;
+    if(playerPos.y <= 0){
+        playerPos.y = 0;
+        jumpVelocity = 0;
+        jumpCount = 0;
+    }
+
+    // Collision with spikes
+    spikes.forEach(s=>{
+        if(playerPos.x + 40 > s.x && playerPos.x < s.x + 40 && playerPos.y < 20){
+            endGame();
+        }
+    });
+
+    // Collect stars
+    stars.forEach((s,i)=>{
+        if(playerPos.x + 40 > s.x && playerPos.x < s.x + 20){
+            score++; careerScore++;
+            scoreEl.textContent = score;
+            careerScoreEl.textContent = careerScore;
+            s.s.remove();
+            stars.splice(i,1);
+        }
+    });
+
+    generateElements();
+    world.style.transform = `translateX(${-playerPos.x + 100}px)`;
+    player.style.left = playerPos.x+'px';
+    player.style.bottom = playerPos.y+'px';
+
+    requestAnimationFrame(gameLoop);
+}
+
+function endGame(){
+    gameOver = true;
+    if(score>highScore) highScore = score;
+    highScoreEl.textContent = highScore;
+    alert("Game Over! Score: "+score);
+    startMenu.style.display='flex';
+}
+
+// --- Shop logic ---
+function updateShop(){
+    shopItemsDiv.innerHTML = '';
+    shopCareerScoreEl.textContent = careerScore;
+    colors.forEach((color, index)=>{
+        const btn = document.createElement('button');
+        btn.textContent = `${color.name} ${index===0 ? '(Default)' : `(Cost: ${color.cost})`}`;
+        if(unlockedColors.includes(index)) btn.textContent += ' - Unlocked';
+        btn.addEventListener('click', ()=>{
+            if(unlockedColors.includes(index)){
+                selectedColor = color;
+            } else if(careerScore >= color.cost){
+                careerScore -= color.cost;
+                unlockedColors.push(index);
+                selectedColor = color;
+                updateShop();
+                careerScoreEl.textContent = careerScore;
+                shopCareerScoreEl.textContent = careerScore;
+            } else {
+                alert('Not enough career score!');
+            }
+            updatePlayerColor();
+        });
+        shopItemsDiv.appendChild(btn);
+    });
+}
+
+// Load saved data on page load
+loadGame();
+updatePlayerColor();
+</script>
+</body>
+</html>
